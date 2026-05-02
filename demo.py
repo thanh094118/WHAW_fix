@@ -88,9 +88,9 @@ def run(cfg,
         save_pkl=False,
         visualize=False,
         run_smplify=False,
-        results=defaultdict(dict),   # cho wham_output.pkl
-        results_opencap=defaultdict(dict),  # cho wham_opencap.pkl
-        filter_frames=False):   # <-- argument mới: bật/tắt các bộ lọc frame
+        results=defaultdict(dict),   # wham_output.pkl
+        results_opencap=defaultdict(dict),  # wham_opencap.pkl
+        filter_frames=False):   # filter frame
 
     cap = cv2.VideoCapture(video)
     assert cap.isOpened(), f'Failed to load video file {video}'
@@ -149,12 +149,12 @@ def run(cfg,
                 f"after detector.process={_n_tracked_frames(tracking_results)}"
             )
 
-            # ---- Luôn chạy: chọn 1 người duy nhất để xử lý ----
+            # only person
             tracking_results = handle_multi_person_tracking(
                 tracking_results, video, num_kpts, length, output_pth
             )
 
-            # Validate: phải có đúng 1 người với key=0
+            # Validate
             if len(tracking_results) == 0:
                 raise ValueError("No tracking results found")
             if len(tracking_results) != 1 or list(tracking_results.keys())[0] != 0:
@@ -164,7 +164,7 @@ def run(cfg,
                 f"[WHAM preprocess] after handle_multi_person: {_n_tracked_frames(tracking_results)} frames"
             )
 
-            # ---- Chỉ chạy khi --filter được bật ----
+            # filter
             if filter_frames:
                 logger.info("[WHAM preprocess] Frame filtering is ENABLED.")
 
@@ -280,7 +280,7 @@ def run(cfg,
                 output = network.forward_smpl(**kwargs)
                 pred = network.refine_trajectory(output, cam_angvel, return_y_up=True)
 
-        # ========= Store results ========= #
+        # Store results
         pred_body_pose = matrix_to_axis_angle(pred['poses_body']).cpu().numpy().reshape(-1, 69)
         pred_root = matrix_to_axis_angle(pred['poses_root_cam']).cpu().numpy().reshape(-1, 3)
         pred_root_world = matrix_to_axis_angle(pred['poses_root_world']).cpu().numpy().reshape(-1, 3)
@@ -288,7 +288,7 @@ def run(cfg,
         pred_pose_world = np.concatenate((pred_root_world, pred_body_pose), axis=-1)
         pred_trans = (pred['trans_cam'] - network.output.offset).cpu().numpy()
 
-        # --- wham_output.pkl : keys của demo gốc ---
+        # wham_output.pkl
         results[_id]['pose']        = pred_pose
         results[_id]['trans']       = pred_trans
         results[_id]['pose_world']  = pred_pose_world
@@ -297,7 +297,7 @@ def run(cfg,
         results[_id]['verts']       = (pred['verts_cam'] + pred['trans_cam'].unsqueeze(1)).cpu().numpy()
         results[_id]['frame_ids']   = frame_id
 
-        # --- wham_opencap.pkl : keys bổ sung của opencap ---
+        #wham_opencap.pkl
         results_opencap[_id]['pose']        = pred_pose
         results_opencap[_id]['trans']       = pred_trans
         results_opencap[_id]['pose_world']  = pred_pose_world
@@ -340,7 +340,7 @@ def main_wham(
     save_pkl=True,
     run_smplify=True,
     rerun=False,
-    filter_frames=False,    # <-- argument mới truyền xuống
+    filter_frames=False,    # new argument
 ):
     # get repo path
     repo_path = os.path.dirname(os.path.abspath(__file__))
@@ -386,8 +386,6 @@ def main_wham(
     if intrinsics is not None:
         calib_path = None
 
-    # Chỉ bắt InsufficientFullBodyKeypointsError khi filter_frames được bật,
-    # vì bộ lọc keypoints mới là nơi raise lỗi đó.
     try:
         run(
             cfg,
@@ -404,7 +402,6 @@ def main_wham(
         )
     except InsufficientFullBodyKeypointsError:
         if not filter_frames:
-            # Không nên xảy ra khi filter tắt, nhưng vẫn xử lý an toàn
             raise
         # Remove partial output so a later run without rerun=True does not skip WHAM.
         if osp.exists(output_pth):
@@ -465,9 +462,7 @@ if __name__ == '__main__':
         filter_frames=args.filter,
     )
 
-# Ví dụ chạy:
-# Không lọc frame (mặc định):
+# Không lọc frame:
 #   python WHAM/demo.py --video input/8.mp4 --estimate_local_only --output_pth output
-#
-# Bật lọc frame:
+# lọc frame:
 #   python WHAM/demo.py --video input/8.mp4 --estimate_local_only --output_pth output --filter
