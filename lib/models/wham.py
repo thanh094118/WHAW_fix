@@ -6,10 +6,10 @@ import torch
 from torch import nn
 import numpy as np
 
-from WHAM.configs import constants as _C
-from WHAM.lib.models.layers import (MotionEncoder, MotionDecoder, TrajectoryDecoder, TrajectoryRefiner, Integrator,
+from configs import constants as _C
+from lib.models.layers import (MotionEncoder, MotionDecoder, TrajectoryDecoder, TrajectoryRefiner, Integrator,
                                rollout_global_motion, reset_root_velocity, compute_camera_motion)
-from WHAM.lib.utils.transforms import axis_angle_to_matrix
+from lib.utils.transforms import axis_angle_to_matrix
 
 
 class Network(nn.Module):
