@@ -41,7 +41,7 @@ try:
 
     _run_global = True
 except:
-    logger.info('DPVO is not properly installed. Only estimate in local coordinates !')
+    logger.info('Only estimate in local coordinates !')
     _run_global = False
 
 initialized = False
@@ -116,7 +116,7 @@ def run(cfg,
                 slam = SLAMModel(
                     video, output_pth, width, height, calib=calib, intrinsics=intrinsics
                 )
-                bar = Bar('Preprocess: 2D detection and SLAM', fill='#', max=length)
+                bar = Bar('Preprocess: 2D detection and no SLAM', fill='#', max=length)
             else:
                 slam = None
                 bar = Bar('Preprocess: 2D detection', fill='#', max=length)
@@ -429,7 +429,7 @@ if __name__ == '__main__':
                         help='Only estimate motion in camera coordinate if True')
 
     parser.add_argument('--visualize', action='store_true',
-                        default=True,
+                        default=False,
                         help='Visualize the output mesh if True')
 
     parser.add_argument('--save_pkl', action='store_true',              
