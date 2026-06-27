@@ -17,6 +17,7 @@ import json
 from configs.config import get_cfg_defaults
 from utils.tracking_filters import (
     handle_multi_person_tracking,
+    ensure_wham_extractor_schema,
     filter_frames_by_bbox_height,
     filter_frames_by_bbox_touching_edges,
     filter_frames_by_keypoints,
@@ -198,6 +199,9 @@ def run(cfg,
                 slam_results[:, 3] = 1.0  # Unit quaternion
 
             # Extract image features (only frames in tracking_results)
+            tracking_results = ensure_wham_extractor_schema(
+                tracking_results, flip_eval=cfg.FLIP_EVAL
+            )
             tracking_results = extractor.run(video, tracking_results)
             logger.info('Complete Data preprocessing!')
 
