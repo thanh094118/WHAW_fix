@@ -1,5 +1,6 @@
 import os.path as osp
 import json
+from collections import defaultdict
 import numpy as np
 from loguru import logger
 
@@ -10,8 +11,28 @@ class InsufficientFullBodyKeypointsError(ValueError):
     pass
 
 
+def ensure_wham_extractor_schema(tracking_results, flip_eval=True):
+    """Normalize tracking results so FeatureExtractor can append into them safely."""
+    if tracking_results is None:
+        return {}
+
+    fixed = defaultdict(lambda: defaultdict(list))
+
+    for _id, track in tracking_results.items():
+        for key, value in track.items():
+            fixed[_id][key] = value
+
+        fixed[_id].setdefault("features", [])
+        if flip_eval:
+            fixed[_id].setdefault("flipped_bbox", [])
+            fixed[_id].setdefault("flipped_keypoints", [])
+            fixed[_id].setdefault("flipped_features", [])
+
+    return fixed
+
+
 def handle_multi_person_tracking(
-    tracking_results, video, num_kpts, nFrames, output_pth
+    tracking_results, video, num_kpts, nFrames, output_pth, flip_eval=True
 ):
     """
     Handle multi-person detection and select the person of interest.
@@ -26,8 +47,11 @@ def handle_multi_person_tracking(
     Returns:
         tracking_results: Updated tracking results with only person of interest (key=0)
     """
+    if tracking_results is None or len(tracking_results) == 0:
+        logger.warning("No tracking results found.")
+        return {}
+
     sub_nums = []
-    Ts = []
     allPeoplePose = []
     allPeopleframes_idx = {}
 
@@ -57,8 +81,11 @@ def handle_multi_person_tracking(
             frame_ids = frame_ids[valid_mask]
             keypoints = keypoints[valid_mask]
 
+        if len(frame_ids) == 0:
+            logger.warning(f"Skipping subject {i_subject}: no valid frames remain.")
+            continue
+
         sub_nums.append(i_subject)
-        Ts.append(len(keypoints))
         allPeoplePose.append(keypoints)
         allPeopleframes_idx[i_subject] = frame_ids
 
@@ -76,10 +103,17 @@ def handle_multi_person_tracking(
         json.dump(allPeopleframes_idx_str_keys, f)
 
     # number of subjects appearing in the video (can be the same person multiple times if coming in and out of the frames)
-    num_people = len(tracking_results.items())
+    num_tracks = len(allPeoplePose)
 
-    if num_people > 1:
-        logger.info(f"More than one person detected in the video ({num_people}).")
+    if num_tracks == 0:
+        logger.warning("No valid tracking IDs remain after frame alignment/filtering.")
+        return {}
+
+    if num_tracks > 1:
+        logger.info(
+            f"More than one tracking ID detected ({num_tracks}). "
+            "This may still be the same physical person split into multiple tracklets."
+        )
         from utils.utils_optim import (
             get_largest_bounding_box,
             trackKeypointBox,
@@ -130,9 +164,8 @@ def handle_multi_person_tracking(
         )
 
         if max_area == 0.0:
-            key2D = np.zeros((num_kpts, nFrames, 2))
-            confidence = np.zeros((num_kpts, nFrames))
-            return key2D, confidence
+            logger.warning("No valid person of interest found after multi-track selection.")
+            return {}
 
         # Get the starting keypoints and bounding box for the detected person
         startFrame = max_idx
@@ -188,7 +221,7 @@ def handle_multi_person_tracking(
         if list(tracking_results.keys())[0] != 0:
             tracking_results[0] = tracking_results.pop(list(tracking_results.keys())[0])
 
-    return tracking_results
+    return ensure_wham_extractor_schema(tracking_results, flip_eval=flip_eval)
 
 
 def filter_frames_by_bbox_height(
