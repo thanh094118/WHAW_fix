@@ -114,7 +114,7 @@ def run(cfg,
 
             if run_global:
                 slam = SLAMModel(
-                    video, output_pth, width, height, calib=calib, intrinsics=intrinsics
+                    video, output_pth, width, height, calib=calib
                 )
                 bar = Bar('Preprocess: 2D detection and no SLAM', fill='#', max=length)
             else:
