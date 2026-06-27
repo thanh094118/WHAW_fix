@@ -151,7 +151,7 @@ def run(cfg,
 
             # only person
             tracking_results = handle_multi_person_tracking(
-                tracking_results, video, num_kpts, length, output_pth
+                tracking_results, video, num_kpts, length, output_pth, flip_eval=cfg.FLIP_EVAL
             )
 
             # Validate
