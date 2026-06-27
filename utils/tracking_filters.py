@@ -241,14 +241,14 @@ def filter_frames_by_bbox_height(
         tracking_results: Dictionary of tracking results with filtered frames
     """
     if len(tracking_results) == 0 or 0 not in tracking_results:
-        return
+        return tracking_results
 
     poi_data = tracking_results[0]
     keypoints_poi = poi_data["keypoints"]
     frame_ids = poi_data["frame_id"]
 
     if len(keypoints_poi) == 0:
-        return
+        return tracking_results
 
     # Use the larger dimension (handles both portrait and landscape videos)
     # In landscape, if human is vertical, compare bbox height with video width
