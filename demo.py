@@ -16,7 +16,6 @@ import json
 
 from configs.config import get_cfg_defaults
 from utils.tracking_filters import (
-    handle_multi_person_tracking,
     ensure_wham_extractor_schema,
     filter_frames_by_bbox_height,
     filter_frames_by_bbox_touching_edges,
@@ -28,7 +27,7 @@ from lib.data.datasets import CustomDataset
 from lib.utils.imutils import avg_preds
 from lib.utils.transforms import matrix_to_axis_angle
 from lib.models import build_network, build_body_model
-from lib.models.preproc.detector import DetectionModel
+from lib.models.preproc.detector2 import DetectionModel
 from lib.models.preproc.extractor import FeatureExtractor
 from lib.models.smplify import TemporalSMPLify
 
@@ -52,6 +51,63 @@ smpl = None
 detector = None
 extractor = None
 
+
+class NoUsableTrackingError(ValueError):
+    """Raised when a video has no usable person track for WHAM."""
+
+    pass
+
+
+def select_single_person(tracking_results, conf_threshold=0.3, min_valid_keypoints=5):
+    """Keep one track only and normalize its key to 0."""
+    if not tracking_results:
+        return tracking_results
+
+    if len(tracking_results) == 1:
+        person_id = next(iter(tracking_results.keys()))
+        return tracking_results if person_id == 0 else {0: tracking_results[person_id]}
+
+    best_id = None
+    best_score = -1.0
+
+    for person_id, data in tracking_results.items():
+        keypoints = np.asarray(data.get("keypoints", []))
+        if keypoints.ndim != 3 or keypoints.shape[-1] < 3 or len(keypoints) == 0:
+            continue
+
+        areas = []
+        for kp_frame in keypoints:
+            valid = kp_frame[kp_frame[:, 2] > conf_threshold]
+            if len(valid) < min_valid_keypoints:
+                continue
+            x_min, y_min = valid[:, 0].min(), valid[:, 1].min()
+            x_max, y_max = valid[:, 0].max(), valid[:, 1].max()
+            area = float((x_max - x_min) * (y_max - y_min))
+            if np.isfinite(area) and area > 0:
+                areas.append(area)
+
+        if len(areas) == 0:
+            continue
+
+        score = float(np.mean(areas))
+        if score > best_score:
+            best_score = score
+            best_id = person_id
+
+    if best_id is None:
+        best_id = next(iter(tracking_results.keys()))
+        logger.warning(
+            "select_single_person: could not score tracks by keypoint area. "
+            f"Keeping the first track ({best_id})."
+        )
+    else:
+        logger.info(
+            f"select_single_person: keeping person {best_id} only "
+            f"(mean keypoint area={best_score:.1f})."
+        )
+
+    return {0: tracking_results[best_id]}
+
 def initialize_wham():
     global initialized, cfg, network, smpl, detector, extractor
     repo_path = os.path.dirname(os.path.abspath(__file__))
@@ -70,6 +126,7 @@ def initialize_wham():
 
         vit_cfg = "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/ViTPose_huge_wholebody_256x192.py"
         vit_ckpt = "checkpoints/vitpose+_huge_wholebody/wholebody.pth"
+        logger.info("Using wholebody huge ViTPose model.")
 
         detector = DetectionModel(
             cfg.DEVICE.lower(), vit_cfg=vit_cfg, vit_ckpt=vit_ckpt
@@ -136,33 +193,36 @@ def run(cfg,
 
                 bar.next()
 
-            tracking_results = detector.process(fps)
-
-            num_kpts = 133
+            try:
+                tracking_results = detector.process(fps)
+            except ValueError:
+                logger.warning(
+                    f"[WHAM preprocess] No valid detections found in {video}. Skipping video."
+                )
+                return False
 
             def _n_tracked_frames(tr):
                 if not tr or 0 not in tr:
                     return 0
                 return len(tr[0]["frame_id"])
 
+            tracking_results = select_single_person(tracking_results)
             logger.info(
                 f"[WHAM preprocess] video frames (cap)={length}, "
                 f"after detector.process={_n_tracked_frames(tracking_results)}"
             )
 
-            # only person
-            tracking_results = handle_multi_person_tracking(
-                tracking_results, video, num_kpts, length, output_pth, flip_eval=cfg.FLIP_EVAL
-            )
-
             # Validate
             if len(tracking_results) == 0:
-                raise ValueError("No tracking results found")
+                logger.warning(
+                    f"[WHAM preprocess] No usable person track remained for {video}. Skipping video."
+                )
+                return False
             if len(tracking_results) != 1 or list(tracking_results.keys())[0] != 0:
                 raise ValueError("Tracking results is not a dictionary with the key 0")
 
             logger.info(
-                f"[WHAM preprocess] after handle_multi_person: {_n_tracked_frames(tracking_results)} frames"
+                f"[WHAM preprocess] after single-person selection: {_n_tracked_frames(tracking_results)} frames"
             )
 
             # filter
@@ -186,6 +246,12 @@ def run(cfg,
                 logger.info(
                     f"[WHAM preprocess] after keypoint_conf filter: {_n_tracked_frames(tracking_results)} frames"
                 )
+
+                if len(tracking_results) == 0 or len(tracking_results[0]["frame_id"]) == 0:
+                    logger.warning(
+                        f"[WHAM preprocess] All frames were filtered out for {video}. Skipping video."
+                    )
+                    return False
 
                 length = len(tracking_results[0]['frame_id'])
             else:
@@ -212,6 +278,15 @@ def run(cfg,
         # If the processed data already exists, load the processed data
         else:
             tracking_results = joblib.load(osp.join(output_pth, 'tracking_results.pth'))
+            tracking_results = select_single_person(tracking_results)
+            tracking_results = ensure_wham_extractor_schema(
+                tracking_results, flip_eval=cfg.FLIP_EVAL
+            )
+            if len(tracking_results) == 0 or 0 not in tracking_results:
+                logger.warning(
+                    f"[WHAM preprocess] Cached tracking results are empty for {video}. Skipping video."
+                )
+                return False
             logger.info(f'Already processed data exists at {output_pth} ! Load the data .')
 
 
@@ -333,6 +408,8 @@ def run(cfg,
         with torch.no_grad():
             run_vis_on_demo(cfg, video, results, output_pth, network.smpl, vis_global=run_global)
 
+    return True
+
 
 def main_wham(
     video_path,
@@ -391,7 +468,7 @@ def main_wham(
         calib_path = None
 
     try:
-        run(
+        completed = run(
             cfg,
             video_path,
             output_pth,
@@ -404,6 +481,12 @@ def main_wham(
             run_smplify=run_smplify,
             filter_frames=filter_frames,
         )
+        if not completed:
+            if osp.exists(output_pth):
+                shutil.rmtree(output_pth)
+                logger.info(f"Removed incomplete WHAM output after skipping video: {output_pth}")
+            logger.info(f"Skipped {video_path} because no usable person track was found.")
+            return
     except InsufficientFullBodyKeypointsError:
         if not filter_frames:
             raise
@@ -467,6 +550,6 @@ if __name__ == '__main__':
     )
 
 # Không lọc frame:
-#   python WHAM/demo.py --video input/8.mp4 --estimate_local_only --output_pth output
+#   python WHAM/demo.py --video input/Axel_1_cam_9.mp4 --estimate_local_only --output_pth output
 # lọc frame:
-#   python WHAM/demo.py --video input/8.mp4 --estimate_local_only --output_pth output --filter
+#   python WHAM/demo.py --video input/Axel_1_cam_9.mp4 --estimate_local_only --output_pth output --filter
