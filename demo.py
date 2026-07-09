@@ -27,7 +27,7 @@ from lib.data.datasets import CustomDataset
 from lib.utils.imutils import avg_preds
 from lib.utils.transforms import matrix_to_axis_angle
 from lib.models import build_network, build_body_model
-from lib.models.preproc.detector2 import DetectionModel
+from lib.models.preproc.detector import DetectionModel
 from lib.models.preproc.extractor import FeatureExtractor
 from lib.models.smplify import TemporalSMPLify
 
