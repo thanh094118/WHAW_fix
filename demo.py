@@ -152,7 +152,8 @@ def run(cfg,
 
     cap = cv2.VideoCapture(video)
     assert cap.isOpened(), f'Failed to load video file {video}'
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    # fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = 10
     length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     width, height = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
@@ -259,7 +260,15 @@ def run(cfg,
                 length = len(tracking_results[0]['frame_id'])
 
             if slam is not None:
-                slam_results = slam.process()
+                try:
+                    slam_results = slam.process()
+                except Exception as exc:
+                    logger.warning(
+                        f"SLAM post-process failed ({type(exc).__name__}: {exc}). "
+                        "Falling back to local-only camera trajectory."
+                    )
+                    slam_results = np.zeros((length, 7))
+                    slam_results[:, 3] = 1.0
             else:
                 slam_results = np.zeros((length, 7))
                 slam_results[:, 3] = 1.0  # Unit quaternion
@@ -548,8 +557,3 @@ if __name__ == '__main__':
         run_smplify=args.run_smplify,
         filter_frames=args.filter,
     )
-
-# Không lọc frame:
-#   python WHAM/demo.py --video input/Axel_1_cam_9.mp4 --estimate_local_only --output_pth output
-# lọc frame:
-#   python WHAM/demo.py --video input/Axel_1_cam_9.mp4 --estimate_local_only --output_pth output --filter
